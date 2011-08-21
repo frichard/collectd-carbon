@@ -180,58 +180,63 @@ def carbon_write(v, data=None):
 
     time = v.time
 
-    # we update shared recorded values, so lock to prevent race conditions
-    data['lock'].acquire()
+    try:
+        # we update shared recorded values, so lock to prevent race conditions
+        data['lock'].acquire()
 
-    lines = []
-    i = 0
-    for value in v.values:
-        ds_name = v_type[i][0]
-        ds_type = v_type[i][1]
+        lines = []
+        i = 0
+        for value in v.values:
+            ds_name = v_type[i][0]
+            ds_type = v_type[i][1]
 
-        path_fields = metric_fields[:]
-        path_fields.append(ds_name)
+            path_fields = metric_fields[:]
+            path_fields.append(ds_name)
 
-        metric = '.'.join(path_fields)
+            metric = '.'.join(path_fields)
 
-        new_value = None
+            new_value = None
 
-        # perform data normalization for COUNTER and DERIVE points
-        if data['derive'] and (ds_type == 'COUNTER' or ds_type == 'DERIVE'):
-            # we have an old value
-            if metric in data['values']:
-                old_value = data['values'][metric]
+            # perform data normalization for COUNTER and DERIVE points
+            if data['derive'] and (ds_type == 'COUNTER' or ds_type == 'DERIVE'):
+                # we have an old value
+                if metric in data['values']:
+                    old_value = data['values'][metric]
 
-                # overflow
-                if value < old_value:
-                    v_type_max = v_type[i][3]
+                    # overflow
+                    if value < old_value:
+                        v_type_max = v_type[i][3]
 
-                    if v_type_max == 'U':
-                        # this is funky. pretend as if this is the first data point
-                        new_value = None
+                        if v_type_max == 'U':
+                            # this is funky. pretend as if this is the first data point
+                            new_value = None
+                        else:
+                            v_type_min = str_to_num(v_type[i][2])
+                            v_type_max = str_to_num(v_type[i][3])
+                            new_value = v_type_max - old_value + value - v_type_min
                     else:
-                        v_type_min = str_to_num(v_type[i][2])
-                        v_type_max = str_to_num(v_type[i][3])
-                        new_value = v_type_max - old_value + value - v_type_min
-                else:
-                    new_value = value - old_value
+                        new_value = value - old_value
 
-            # update previous value
-            data['values'][metric] = value
+                # update previous value
+                data['values'][metric] = value
 
-        else:
-            new_value = value
+            else:
+                new_value = value
 
-        if new_value is not None:
-            line = '%s %f %d' % ( metric, new_value, time )
-            lines.append(line)
+            if new_value is not None:
+                line = '%s %f %d' % ( metric, new_value, time )
+                lines.append(line)
 
-        i += 1
+            i += 1
 
-    data['lock'].release()
+        data['lock'].release()
 
-    lines.append('')
-    carbon_write_data(data, '\n'.join(lines))
+        lines.append('')
+        carbon_write_data(data, '\n'.join(lines))
+        
+    except:
+        data['lock'].release()
+        collectd.warning('carbon_writer: error sending data: %s' % format_exc())
 
 collectd.register_config(carbon_config)
 collectd.register_init(carbon_init)
